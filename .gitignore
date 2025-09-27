@@ -1,0 +1,8 @@
+__pycache__/
+*.py[cod]
+.venv/
+.streamlit/
+.DS_Store
+build/
+dist/
+*.egg-info/
