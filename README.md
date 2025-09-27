@@ -1,3 +1,6 @@
+![tests](https://github.com/akrai37/fpa-copilot/actions/workflows/tests.yml/badge.svg)
+
+
 # 📊 CFO Copilot — Mini FP&A Agent (Streamlit)
 
 End-to-end rule-based agent that answers FP&A questions from CSV data, with charts and optional PDF export.
