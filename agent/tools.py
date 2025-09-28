@@ -466,6 +466,7 @@ def export_pdf(path: str, month_str: Optional[str] = None):
     right = width - 1*inch
     content_width = right - left
     top_margin = 0.7*inch
+    bottom_margin = 0.5*inch
     chart_h = 2.7*inch
 
     text, fig = get_revenue_vs_budget(month_str)
@@ -513,7 +514,18 @@ def export_pdf(path: str, month_str: Optional[str] = None):
     if fig3:
         tmp_png3 = os.path.join(FIXTURES_DIR, "_tmp_chart3.png")
         fig3.savefig(tmp_png3, dpi=150, bbox_inches="tight")
-        c.drawImage(tmp_png3, left, chart2_top - chart_h, width=content_width, height=chart_h, preserveAspectRatio=True, mask='auto')
+        # Fit to remaining space above bottom margin if needed
+        draw_h3 = chart_h
+        # Target bottom Y if drawn at full height
+        target_y3 = chart2_top - chart_h
+        if target_y3 < bottom_margin:
+            # shrink to fit
+            available_h = max(0.0, chart2_top - bottom_margin)
+            # keep a minimum reasonable height
+            draw_h3 = max(1.5*inch, available_h)
+            target_y3 = chart2_top - draw_h3
+        if draw_h3 > 0.25*inch:
+            c.drawImage(tmp_png3, left, target_y3, width=content_width, height=draw_h3, preserveAspectRatio=True, mask='auto')
         try: os.remove(tmp_png3)
         except: pass
 
@@ -524,7 +536,26 @@ def export_pdf(path: str, month_str: Optional[str] = None):
         tmp_png4 = os.path.join(FIXTURES_DIR, "_tmp_chart4.png")
         fig4.savefig(tmp_png4, dpi=150, bbox_inches="tight")
         cash_chart_top = cash_end_y - 0.15*inch
-        c.drawImage(tmp_png4, left, cash_chart_top - chart_h, width=content_width, height=chart_h, preserveAspectRatio=True, mask='auto')
+        # Fit to remaining space above bottom margin; shrink if necessary
+        draw_h4 = chart_h
+        target_y4 = cash_chart_top - chart_h
+        if target_y4 < bottom_margin:
+            available_h = max(0.0, cash_chart_top - bottom_margin)
+            # If there's not enough space to render at least 1.5in, try to shrink; if still not enough, start a new page
+            if available_h < 1.0*inch:
+                # new page for cash chart
+                c.showPage()
+                # reset common layout vars for new page context
+                left = 1*inch
+                right = width - 1*inch
+                content_width = right - left
+                # Start near top of new page
+                cash_chart_top = height - top_margin
+                available_h = cash_chart_top - bottom_margin
+            draw_h4 = max(1.5*inch, available_h)
+            target_y4 = cash_chart_top - draw_h4
+        if draw_h4 > 0.25*inch:
+            c.drawImage(tmp_png4, left, target_y4, width=content_width, height=draw_h4, preserveAspectRatio=True, mask='auto')
         try: os.remove(tmp_png4)
         except: pass
 
