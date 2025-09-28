@@ -461,6 +461,26 @@ def export_pdf(path: str, month_str: Optional[str] = None):
     c = canvas.Canvas(path, pagesize=LETTER)
     width, height = LETTER
 
+    # ---- Document metadata & outline ----
+    # Try to build a friendly title with month context when available
+    disp_month = None
+    try:
+        if month_str:
+            pm = pd.Period(month_str, freq="M")
+            disp_month = pm.strftime('%b %Y')
+    except Exception:
+        disp_month = None
+
+    doc_title = "Board Pack — FP&A Summary" + (f" ({disp_month})" if disp_month else "")
+    try:
+        c.setTitle(doc_title)
+        c.setAuthor("CFO Copilot")
+        c.setSubject("FP&A Board Pack")
+        c.setCreator("CFO Copilot")
+        c.setKeywords(["FP&A", "Finance", "Board Pack", "Summary"])  # optional
+    except Exception:
+        pass
+
     # Page 1 (fixed grid to avoid overlap)
     left = 1*inch
     right = width - 1*inch
@@ -473,6 +493,12 @@ def export_pdf(path: str, month_str: Optional[str] = None):
     c.setFont("Helvetica-Bold", 14)
     title_y = height - top_margin
     c.drawString(left, title_y, "Board Pack — FP&A Summary")
+    # Add a bookmark/outline for Page 1
+    try:
+        c.bookmarkPage("page1")
+        c.addOutlineEntry("Summary & GM Trend", "page1", level=0, closed=False)
+    except Exception:
+        pass
 
     # Subtitle below title, then place chart directly after wrapped text
     sub_start_y = title_y - 0.2*inch
@@ -500,6 +526,12 @@ def export_pdf(path: str, month_str: Optional[str] = None):
         except: pass
 
     c.showPage()
+    # Add bookmark for Page 2
+    try:
+        c.bookmarkPage("page2")
+        c.addOutlineEntry("Opex & Cash Overview", "page2", level=0, closed=False)
+    except Exception:
+        pass
 
     # Page 2 (fixed grid)
     text3, fig3 = get_opex_breakdown(month_str or None)
@@ -545,6 +577,11 @@ def export_pdf(path: str, month_str: Optional[str] = None):
             if available_h < 1.0*inch:
                 # new page for cash chart
                 c.showPage()
+                try:
+                    c.bookmarkPage("page3")
+                    c.addOutlineEntry("Cash (continued)", "page3", level=0, closed=False)
+                except Exception:
+                    pass
                 # reset common layout vars for new page context
                 left = 1*inch
                 right = width - 1*inch
