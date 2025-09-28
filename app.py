@@ -18,109 +18,12 @@ def _clear_chat():
 # (no URL query param behavior) clear action is triggered via the sidebar button below
 
 with st.sidebar:
-    # Scoped CSS: style ONLY the next button after our marker (the Clear button)
-    st.markdown(
-        """
-        <style>
-        /* Scoped pill-style Clear button immediately after our marker.
-           Additional, more specific selectors below target Streamlit's button
-           rendering so the style applies even if Streamlit wraps the control. */
-        #clear-chat-marker + div button,
-        #clear-chat-marker + div button:focus-visible,
-        /* Fallback: target any button in the next widget container that has the visible label 'Clear' */
-        #clear-chat-marker + div button[title="Clear"],
-        #clear-chat-marker + div button[aria-label="Clear"],
-        #clear-chat-marker + div button[data-testid^="stButton"][aria-label="Clear"] {
-                font-size: 12px !important; /* readable label size */
-            padding: 6px 10px !important;
-            line-height: 1 !important;
-                min-width: 56px !important; /* ensure label isn't clipped */
-            white-space: nowrap !important; /* keep text horizontal */
-            display: inline-flex !important;
-            align-items: center !important;
-            justify-content: center !important;
-            background-color: #0f1720 !important; /* deep charcoal */
-            color: #ffffff !important;            /* white text */
-            border: 1px solid rgba(255,255,255,0.06) !important; /* subtle outline */
-            box-shadow: none !important;
-            border-radius: 999px !important; /* pill */
-            transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease !important;
-        }
-        #clear-chat-marker + div button:hover {
-            background-color: #1b232b !important; /* slightly lighter on hover */
-            border-color: rgba(255,255,255,0.10) !important;
-            transform: translateY(-1px) !important; /* tiny lift */
-            box-shadow: 0 4px 10px rgba(2,6,23,0.35) !important; /* soft shadow */
-        }
-        /* Keep focus outline subtle and accessible */
-        #clear-chat-marker + div button:focus {
-            outline: 2px solid rgba(99,102,241,0.18) !important;
-            outline-offset: 2px !important;
-        }
-        </style>
-        """,
-        unsafe_allow_html=True,
-    )
-
-    col_btn_top, _ = st.columns([0.30, 0.70])  # wide enough to avoid vertical wrap
+    col_btn_top, _ = st.columns([0.30, 0.70])
     with col_btn_top:
-        # Insert a marker before the button so CSS can target only this button
-                st.markdown("<div id='clear-chat-marker'></div>", unsafe_allow_html=True)
-                st.button("Clear", on_click=_clear_chat, key="clear_chat", type="primary")
+        st.button("Clear", on_click=_clear_chat, key="clear_chat")
 
-                # Inject a tiny runtime JS that finds the Clear button and applies inline styles.
-                # This is a robust fallback for Streamlit versions that wrap widgets differently.
-                try:
-                        import streamlit.components.v1 as components
-
-                        components.html(
-                                """
-                                <script>
-                                (function(){
-                                    // Find any button element with exact text 'Clear' inside the sidebar
-                                    const root = document.querySelector('aside');
-                                    if(!root) return;
-                                    const btns = Array.from(root.querySelectorAll('button'));
-                                    const clearBtn = btns.find(b => (b.innerText || b.textContent || '').trim() === 'Clear');
-                                    if(!clearBtn) return;
-                                    // Apply inline styles (pill look)
-                                    Object.assign(clearBtn.style, {
-                                        fontSize: '12px',
-                                        padding: '6px 10px',
-                                        lineHeight: '1',
-                                        minWidth: '56px',
-                                        whiteSpace: 'nowrap',
-                                        display: 'inline-flex',
-                                        alignItems: 'center',
-                                        justifyContent: 'center',
-                                        backgroundColor: '#0f1720',
-                                        color: '#ffffff',
-                                        border: '1px solid rgba(255,255,255,0.06)',
-                                        borderRadius: '999px',
-                                        transition: 'transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease',
-                                    });
-                                    // Hover effects via pointer events
-                                    clearBtn.addEventListener('mouseenter', ()=>{
-                                        clearBtn.style.backgroundColor = '#1b232b';
-                                        clearBtn.style.borderColor = 'rgba(255,255,255,0.10)';
-                                        clearBtn.style.transform = 'translateY(-1px)';
-                                        clearBtn.style.boxShadow = '0 4px 10px rgba(2,6,23,0.35)';
-                                    });
-                                    clearBtn.addEventListener('mouseleave', ()=>{
-                                        clearBtn.style.backgroundColor = '#0f1720';
-                                        clearBtn.style.borderColor = 'rgba(255,255,255,0.06)';
-                                        clearBtn.style.transform = '';
-                                        clearBtn.style.boxShadow = 'none';
-                                    });
-                                })();
-                                </script>
-                                """,
-                                height=0,
-                                scrolling=False,
-                        )
-                except Exception:
-                        # components may not be available in some environments; ignore silently
-                        pass
+    # add some space before the next section
+    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
 
     st.header("Data Health")
     health = tools.data_health()
