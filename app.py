@@ -4,6 +4,7 @@ from agent import tools
 import re
 import unicodedata
 import tempfile, os
+import pandas as pd
 
 st.set_page_config(page_title="CFO Copilot", page_icon="📊")
 st.title("📊 CFO Copilot — Mini FP&A Agent")
@@ -51,11 +52,38 @@ with st.sidebar:
     st.header("Export")
     month_for_pdf = st.text_input("Month for PDF (e.g., June 2025)", value="")
     if st.button("Export Board PDF"):
-        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-        tools.export_pdf(tmp.name, month_for_pdf or None)
-        st.success("PDF generated.")
-        st.download_button("Download PDF", data=open(tmp.name, "rb").read(), file_name="board_pack.pdf", mime="application/pdf")
-        os.unlink(tmp.name)
+        # Normalize month input (accepts 'June', '2025-06', 'Jun 2025', etc.).
+        month_input = (month_for_pdf or "").strip()
+        norm_month = None
+        if month_input:
+            try:
+                ts = pd.to_datetime(month_input, errors="coerce")
+                if ts is not None and not pd.isna(ts):
+                    norm_month = str(pd.Period(ts, freq="M"))  # 'YYYY-MM'
+            except Exception:
+                norm_month = None
+
+        # If user typed something we couldn't parse, show a friendly error
+        if month_input and norm_month is None:
+            st.error("Invalid month. Please enter like 'June 2025' or '2025-06'.")
+        else:
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+            try:
+                tools.export_pdf(tmp.name, norm_month)
+                st.success("PDF generated.")
+                st.download_button(
+                    "Download PDF",
+                    data=open(tmp.name, "rb").read(),
+                    file_name="board_pack.pdf",
+                    mime="application/pdf",
+                )
+            except Exception:
+                st.error("Couldn't generate PDF. Please try again with a valid month like 'June 2025'.")
+            finally:
+                try:
+                    os.unlink(tmp.name)
+                except Exception:
+                    pass
 
     # ...sidebar continues (other items kept)
 
