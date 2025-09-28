@@ -18,9 +18,8 @@ def _clear_chat():
 # (no URL query param behavior) clear action is triggered via the sidebar button below
 
 with st.sidebar:
-    col_btn_top, _ = st.columns([0.30, 0.70])
-    with col_btn_top:
-        st.button("Clear", on_click=_clear_chat, key="clear_chat")
+    # Render Clear button directly (avoid columns that can cause flex/wrap in narrow sidebars)
+    st.button("Clear", on_click=_clear_chat, key="clear_chat")
 
     # add some space before the next section
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
