@@ -1,15 +1,130 @@
-
 import streamlit as st
 from agent.planner import route_query
 from agent import tools
+import re
+import unicodedata
 import tempfile, os
 
-st.set_page_config(page_title="CFO Copilot", page_icon="📊", layout="centered")
+st.set_page_config(page_title="CFO Copilot", page_icon="📊")
 st.title("📊 CFO Copilot — Mini FP&A Agent")
 
+# Clear chat action
+def _clear_chat():
+    if "history" in st.session_state:
+        st.session_state.history = []
+
+# (no URL query param behavior) clear action is triggered via the sidebar button below
+
+# (no URL query param behavior) clear action is triggered via the sidebar button below
+
 with st.sidebar:
+    # Scoped CSS: style ONLY the next button after our marker (the Clear button)
+    st.markdown(
+        """
+        <style>
+        /* Scoped pill-style Clear button immediately after our marker.
+           Additional, more specific selectors below target Streamlit's button
+           rendering so the style applies even if Streamlit wraps the control. */
+        #clear-chat-marker + div button,
+        #clear-chat-marker + div button:focus-visible,
+        /* Fallback: target any button in the next widget container that has the visible label 'Clear' */
+        #clear-chat-marker + div button[title="Clear"],
+        #clear-chat-marker + div button[aria-label="Clear"],
+        #clear-chat-marker + div button[data-testid^="stButton"][aria-label="Clear"] {
+                font-size: 12px !important; /* readable label size */
+            padding: 6px 10px !important;
+            line-height: 1 !important;
+                min-width: 56px !important; /* ensure label isn't clipped */
+            white-space: nowrap !important; /* keep text horizontal */
+            display: inline-flex !important;
+            align-items: center !important;
+            justify-content: center !important;
+            background-color: #0f1720 !important; /* deep charcoal */
+            color: #ffffff !important;            /* white text */
+            border: 1px solid rgba(255,255,255,0.06) !important; /* subtle outline */
+            box-shadow: none !important;
+            border-radius: 999px !important; /* pill */
+            transition: transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease !important;
+        }
+        #clear-chat-marker + div button:hover {
+            background-color: #1b232b !important; /* slightly lighter on hover */
+            border-color: rgba(255,255,255,0.10) !important;
+            transform: translateY(-1px) !important; /* tiny lift */
+            box-shadow: 0 4px 10px rgba(2,6,23,0.35) !important; /* soft shadow */
+        }
+        /* Keep focus outline subtle and accessible */
+        #clear-chat-marker + div button:focus {
+            outline: 2px solid rgba(99,102,241,0.18) !important;
+            outline-offset: 2px !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+
+    col_btn_top, _ = st.columns([0.30, 0.70])  # wide enough to avoid vertical wrap
+    with col_btn_top:
+        # Insert a marker before the button so CSS can target only this button
+                st.markdown("<div id='clear-chat-marker'></div>", unsafe_allow_html=True)
+                st.button("Clear", on_click=_clear_chat, key="clear_chat", type="primary")
+
+                # Inject a tiny runtime JS that finds the Clear button and applies inline styles.
+                # This is a robust fallback for Streamlit versions that wrap widgets differently.
+                try:
+                        import streamlit.components.v1 as components
+
+                        components.html(
+                                """
+                                <script>
+                                (function(){
+                                    // Find any button element with exact text 'Clear' inside the sidebar
+                                    const root = document.querySelector('aside');
+                                    if(!root) return;
+                                    const btns = Array.from(root.querySelectorAll('button'));
+                                    const clearBtn = btns.find(b => (b.innerText || b.textContent || '').trim() === 'Clear');
+                                    if(!clearBtn) return;
+                                    // Apply inline styles (pill look)
+                                    Object.assign(clearBtn.style, {
+                                        fontSize: '12px',
+                                        padding: '6px 10px',
+                                        lineHeight: '1',
+                                        minWidth: '56px',
+                                        whiteSpace: 'nowrap',
+                                        display: 'inline-flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        backgroundColor: '#0f1720',
+                                        color: '#ffffff',
+                                        border: '1px solid rgba(255,255,255,0.06)',
+                                        borderRadius: '999px',
+                                        transition: 'transform 120ms ease, box-shadow 120ms ease, background-color 120ms ease',
+                                    });
+                                    // Hover effects via pointer events
+                                    clearBtn.addEventListener('mouseenter', ()=>{
+                                        clearBtn.style.backgroundColor = '#1b232b';
+                                        clearBtn.style.borderColor = 'rgba(255,255,255,0.10)';
+                                        clearBtn.style.transform = 'translateY(-1px)';
+                                        clearBtn.style.boxShadow = '0 4px 10px rgba(2,6,23,0.35)';
+                                    });
+                                    clearBtn.addEventListener('mouseleave', ()=>{
+                                        clearBtn.style.backgroundColor = '#0f1720';
+                                        clearBtn.style.borderColor = 'rgba(255,255,255,0.06)';
+                                        clearBtn.style.transform = '';
+                                        clearBtn.style.boxShadow = 'none';
+                                    });
+                                })();
+                                </script>
+                                """,
+                                height=0,
+                                scrolling=False,
+                        )
+                except Exception:
+                        # components may not be available in some environments; ignore silently
+                        pass
+
     st.header("Data Health")
     health = tools.data_health()
+
     # human-friendly summary + JSON view
     if isinstance(health, dict):
         if health.get("ok"):
@@ -27,7 +142,10 @@ with st.sidebar:
     else:
         # older string message
         st.write(health)
+
     st.divider()
+    # Add extra top spacing so the Export section is visually separated from the controls above
+    st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
     st.header("Export")
     month_for_pdf = st.text_input("Month for PDF (e.g., June 2025)", value="")
     if st.button("Export Board PDF"):
@@ -36,6 +154,10 @@ with st.sidebar:
         st.success("PDF generated.")
         st.download_button("Download PDF", data=open(tmp.name, "rb").read(), file_name="board_pack.pdf", mime="application/pdf")
         os.unlink(tmp.name)
+
+    # ...sidebar continues (other items kept)
+
+    # (Clear chat button moved to top) -- removed bottom spacer/button
 
 st.markdown("""
 Ask about **Revenue vs Budget**, **Gross Margin % trend**, **Opex breakdown**, or **Cash runway**.
@@ -68,7 +190,7 @@ if query:
     else:
         text, fig = ("I can answer: Revenue vs Budget, Gross Margin % trend, Opex breakdown, EBITDA, and Cash runway.", None)
 
-    st.session_state.history.append(("assistant", text, fig))
+    st.session_state.history.append(("assistant", text, fig, intent))
 
 for item in st.session_state.history:
     role = item[0]
@@ -77,6 +199,176 @@ for item in st.session_state.history:
             st.write(item[1])
     else:
         with st.chat_message("assistant"):
-            st.write(item[1])
+            # Render structured metrics first (clean, no markdown), then a plain sentence.
+            intent = item[3] if len(item) > 3 else None
+
+            def _strip_md(s: str) -> str:
+                s2 = re.sub(r"\*\*(.*?)\*\*", r"\1", s)
+                s2 = re.sub(r"\*(.*?)\*", r"\1", s2)
+                return s2
+
+            def _sanitize_text(s: str) -> str:
+                if not isinstance(s, str):
+                    return s
+                # Normalize unicode; remove zero-width characters; replace unicode asterisk
+                s2 = unicodedata.normalize("NFKC", s)
+                for zw in [
+                    "\u200b",  # zero width space
+                    "\u2009",  # thin space
+                    "\u200a",  # hair space
+                    "\u200c",  # zero width non-joiner
+                    "\u200d",  # zero width joiner
+                    "\u202f",  # narrow no-break space
+                    "\u00a0",  # non-breaking space
+                    "\u2060",  # word joiner
+                    "\u180e",  # mongolian vowel separator (deprecated)
+                    "\ufeff",  # BOM
+                ]:
+                    s2 = s2.replace(zw, "")
+                s2 = s2.replace("∗", "*")
+                return s2
+
+            def _metrics_revenue_vs_budget(text: str):
+                m = re.findall(r"\$([0-9,]+(?:\.\d{2})?)", text)
+                p = re.search(r"([+-]?[0-9]+(?:\.[0-9]+)?)%", text)
+                if len(m) >= 2:
+                    col1, col2, col3 = st.columns(3)
+                    def _small_metric(col, label, val, delta=None):
+                        # Render a compact metric: label (small), value (moderate), optional delta (small)
+                        with col:
+                            st.markdown(f"<div style='font-size:12px;color:#6c757d'>{label}</div>", unsafe_allow_html=True)
+                            st.markdown(f"<div style='font-size:18px;font-weight:600'>${val}</div>", unsafe_allow_html=True)
+                            if delta is not None:
+                                st.markdown(f"<div style='font-size:12px;color:#6c757d'>{delta}</div>", unsafe_allow_html=True)
+
+                    _small_metric(col1, "Revenue (USD)", m[0])
+                    _small_metric(col2, "Budget (USD)", m[1])
+                    if p:
+                        pct = p.group(1)
+                        _small_metric(col3, "Var vs plan", f"{pct}%")
+
+            def _metrics_ebitda(text: str):
+                vals = re.findall(r"\$([0-9,]+(?:\.\d{2})?)", text)
+                # order expected: EBITDA, Revenue, COGS, Opex
+                if len(vals) >= 4:
+                    ebitda, rev, cogs, opex = vals[0], vals[1], vals[2], vals[3]
+                    col1, col2, col3, col4 = st.columns(4)
+                    def _sm(col, label, val):
+                        st.markdown(f"<div style='font-size:12px;color:#6c757d'>{label}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='font-size:18px;font-weight:600'>${val}</div>", unsafe_allow_html=True)
+                    _sm(col1, "EBITDA", ebitda)
+                    _sm(col2, "Revenue", rev)
+                    _sm(col3, "COGS", cogs)
+                    _sm(col4, "Opex", opex)
+
+            def _metrics_cash_runway(text: str):
+                runway = re.search(r"runway:\s*\*\*?([0-9]+(?:\.[0-9]+)?)\s*months\*\*?", text, re.IGNORECASE)
+                cash = re.search(r"cash\s*\*\*?\$([0-9,]+)\*\*?", text, re.IGNORECASE)
+                burn = re.search(r"burn.*?\*\*?\$([0-9,]+)\*\*?/mo", text, re.IGNORECASE)
+                col1, col2, col3 = st.columns(3)
+                def _sm_small(col, label, val):
+                    with col:
+                        st.markdown(f"<div style='font-size:12px;color:#6c757d'>{label}</div>", unsafe_allow_html=True)
+                        st.markdown(f"<div style='font-size:18px;font-weight:600'>{val}</div>", unsafe_allow_html=True)
+
+                if runway:
+                    _sm_small(col1, "Runway (months)", runway.group(1))
+                if cash:
+                    _sm_small(col2, "Cash", f"${cash.group(1)}")
+                if burn:
+                    _sm_small(col3, "Avg burn/mo", f"${burn.group(1)}")
+
+            def _render_summary_code(s: str, pad: bool = True):
+                # Show a sanitized monospaced summary with optional top padding
+                txt = _sanitize_text(_strip_md(s)) if isinstance(s, str) else s
+                if pad:
+                    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                # Revert to simple code block rendering
+                st.code(txt)
+
+            if intent == "revenue_vs_budget":
+                _metrics_revenue_vs_budget(item[1])
+                # Custom clean summary for revenue vs budget in a monospace code block
+                stripped = _sanitize_text(_strip_md(item[1]))
+                m = re.findall(r"\$([0-9,]+(?:\.\d{2})?)", stripped)
+                p = re.search(r"([+-]?[0-9]+(?:\.[0-9]+)?)%", stripped)
+                if len(m) >= 2 and p:
+                    month_text = re.search(r"^([A-Za-z]+ \d{4})", stripped)
+                    month = month_text.group(1) if month_text else "This month"
+                    line = f"{month} revenue was ${m[0]} vs budget ${m[1]} ({p.group(1)}% vs plan)"
+                    # Add a small padded container above the code block for breathing room
+                    st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
+                    st.code(line)
+                else:
+                    st.code(stripped)
+            elif intent == "ebitda":
+                _metrics_ebitda(item[1])
+                # Custom clean summary for EBITDA in monospace
+                stripped = _sanitize_text(_strip_md(item[1]))
+                vals = re.findall(r"\$([0-9,]+(?:\.\d{2})?)", stripped)
+                if len(vals) >= 4:
+                    month_text = re.search(r"^([A-Za-z]+ \d{4})", stripped)
+                    month = month_text.group(1) if month_text else "This month"
+                    line = f"{month} EBITDA: ${vals[0]} (Revenue ${vals[1]} - COGS ${vals[2]} - Opex ${vals[3]})"
+                    _render_summary_code(line)
+                else:
+                    _render_summary_code(stripped)
+            elif intent == "cash_runway":
+                _metrics_cash_runway(item[1])
+                # Custom clean summary for Cash Runway in monospace
+                stripped = _sanitize_text(_strip_md(item[1]))
+                vals = re.findall(r"(\d+(?:\.\d+)?)\s*months?", stripped)
+                if vals:
+                    line = f"Cash Runway: {vals[0]} months"
+                    _render_summary_code(line)
+                else:
+                    _render_summary_code(stripped)
+            elif intent == "gross_margin_trend":
+                # Clean summary for GM trend (monospace)
+                _render_summary_code(f"Gross margin trend: {_sanitize_text(_strip_md(item[1]))}")
+            elif intent == "opex_breakdown":
+                # Render Opex in a terminal/Jupyter-like monospaced box
+                def _render_opex_code_block(raw: str):
+                    stripped = _sanitize_text(_strip_md(raw))
+                    # Try to parse: Month, Total Opex, and category amounts from parentheses
+                    month_m = re.search(r"^([A-Za-z]+\s+\d{4})", stripped)
+                    total_m = re.search(r"Opex:\s*\$([0-9,]+(?:\.\d{2})?)", stripped, re.IGNORECASE)
+                    cats_m = re.search(r"\(([^\)]+)\)", stripped)
+
+                    try:
+                        month = month_m.group(1) if month_m else "Opex"
+                        total = total_m.group(1) if total_m else None
+                        pairs = []
+                        if cats_m:
+                            parts = [p.strip() for p in cats_m.group(1).split(",")]
+                            for p in parts:
+                                m = re.match(r"\s*([A-Za-z0-9 &/\-]+)\s*\$([0-9,]+(?:\.\d{2})?)\s*", p)
+                                if m:
+                                    pairs.append((m.group(1), m.group(2)))
+
+                        # If parsing fails, just show sanitized text in styled code block
+                        if not total and not pairs:
+                            _render_summary_code(stripped)
+                            return
+
+                        # Build aligned output
+                        lines = [f"{month} Opex"]
+                        if total:
+                            lines.append(f"Total: ${total}")
+                        if pairs:
+                            lines.append("")
+                            w = max(len(name) for name, _ in pairs)
+                            for name, amt in pairs:
+                                lines.append(f"{name.ljust(w)}  ${amt}")
+                        _render_summary_code("\n".join(lines))
+                    except Exception:
+                        # Fallback to a styled code block
+                        _render_summary_code(stripped)
+
+                _render_opex_code_block(item[1])
+            else:
+                # Fallback for other intents: render monospace summary
+                _render_summary_code(item[1])
+
             if len(item) > 2 and item[2] is not None:
                 st.pyplot(item[2])

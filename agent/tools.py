@@ -419,28 +419,44 @@ def export_pdf(path: str, month_str: Optional[str] = None):
     from reportlab.lib.units import inch
     from reportlab.pdfbase.pdfmetrics import stringWidth
 
+    from reportlab.platypus import Paragraph
+    from reportlab.lib.styles import ParagraphStyle
+    from reportlab.lib.enums import TA_LEFT
+
+    def _md_to_rml(text: str) -> str:
+        """Convert lightweight markdown bold (**text**) into ReportLab inline <b> tags.
+
+        This keeps the original text content but removes literal asterisks so the PDF text is selectable/copyable.
+        """
+        import re
+        if not text:
+            return ""
+        # Replace **bold** with <b>bold</b>
+        r = re.sub(r"\*\*(.*?)\*\*", r"<b>\1</b>", text)
+        # Also handle single *...* as italic-ish fallback -> use <b> for simplicity
+        r = re.sub(r"\*(.*?)\*", r"<b>\1</b>", r)
+        return r
+
     def wrap_and_draw_text(c, text: str, x: float, y: float, max_width: float, font_name: str = "Helvetica", font_size: int = 10, leading: float = 12.0) -> float:
-        """Greedy wrap text to max_width and draw; returns bottom y after text."""
-        c.setFont(font_name, font_size)
+        """Render wrapped text using ReportLab Paragraph; returns bottom y after text."""
         if not text:
             return y
-        words = text.split()
-        line = ""
-        lines = []
-        for w in words:
-            trial = (line + " " + w).strip()
-            if stringWidth(trial, font_name, font_size) <= max_width:
-                line = trial
-            else:
-                if line:
-                    lines.append(line)
-                line = w
-        if line:
-            lines.append(line)
-        for ln in lines:
-            c.drawString(x, y, ln)
-            y -= leading
-        return y
+        # Create a simple Paragraph style
+        ps = ParagraphStyle(
+            name="body",
+            fontName=font_name,
+            fontSize=font_size,
+            leading=leading,
+            alignment=TA_LEFT,
+        )
+        rml = _md_to_rml(text)
+        # Paragraph draws from its baseline; we need to wrap and get height
+        p = Paragraph(rml, ps)
+        # p.wrap returns (width, height)
+        w, h = p.wrap(max_width, y)
+        # draw onto canvas at x,y-h (ReportLab coordinates)
+        p.drawOn(c, x, y - h)
+        return y - h - (leading * 0.1)
 
     c = canvas.Canvas(path, pagesize=LETTER)
     width, height = LETTER

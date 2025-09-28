@@ -24,3 +24,15 @@ def test_ebitda():
     intent, params = route_query("What is EBITDA for June 2025?")
     assert intent == "ebitda"
     assert params["month"].startswith("2025-")
+
+def test_synonyms_and_iso_month():
+    # revenue vs plan, ISO month
+    intent, params = route_query("Compare sales vs plan for 2025-06")
+    assert intent == "revenue_vs_budget"
+    assert params["month"] == "2025-06"
+
+def test_quarter_parsing_for_month_pick():
+    # Q2 2025 -> map to 2025-06 as representative month
+    intent, params = route_query("Revenue vs budget for Q2 2025")
+    assert intent == "revenue_vs_budget"
+    assert params["month"] == "2025-06"

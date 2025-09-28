@@ -1,0 +1,246 @@
+
+import streamlit as st
+from agent.planner import route_query
+from agent import tools
+import re
+import tempfile, os
+
+st.set_page_config(page_title="CFO Copilot", page_icon="📊"                                                   elif intent == "cash_runway":
+                _metrics_cash_runway(item[1])
+                # Custom clean summary for Cash Runway
+                stripped = _strip_md(item[1])
+                vals = re.findall(r"(\d+(?:\.\d+)?)\s*months?", stripped)
+                if vals:
+                    st.write(f"🚀 Cash Runway: {vals[0]} months")
+                else:
+                    st.write(stripped)tent == "cash_runway":
+                _metrics_cash_runway(item[1])
+                # Custom clean summary for Cash Runway
+                stripped = _strip_md(item[1])
+                vals = re.findall(r"(\d+(?:\.\d+)?)\s*months?", stripped)
+                if vals:
+                    st.write(f"🚀 Cash Runway: {vals[0]} months")
+                else:
+                    st.write(stripped)tent == "cash_runway":
+                _metrics_cash_runway(item[1])
+                # Custom clean summary for Cash Runway
+                stripped = _strip_md(item[1])
+                vals = re.findall(r"(\d+(?:\.\d+)?)\s*months?", stripped)
+                if vals:
+                    st.write(f"🚀 Cash Runway: {vals[0]} months")
+                else:
+                    st.write(stripped)tent == "cash_runway":
+                _metrics_cash_runway(item[1])
+                # Custom clean summary for Cash Runway
+                stripped = _strip_md(item[1])
+                vals = re.findall(r"(\d+(?:\.\d+)?)\s*months?", stripped)
+                if vals:
+                    st.write(f"🚀 Cash Runway: {vals[0]} months")
+                else:
+                    st.write(stripped)tent == "cash_runway":
+                _metrics_cash_runway(item[1])
+                # Custom clean summary for Cash Runway
+                stripped = _strip_md(item[1])
+                vals = re.findall(r"(\d+(?:\.\d+)?)\s*months?", stripped)
+                if vals:
+                    st.write(f"🚀 Cash Runway: {vals[0]} months")
+                else:
+                    st.write(stripped)ntent == "cash_runway":
+                _metrics_cash_runway(item[1])
+                # Custom clean summary for Cash Runway
+                stripped = _strip_md(item[1])
+                vals = re.findall(r"(\d+(?:\.\d+)?)\s*months?", stripped)
+                if vals:
+                    st.write(f"🚀 Cash Runway: {vals[0]} months")
+                else:
+                    st.write(stripped)"📊 CFO Copilot — Mini FP&A Agent")
+
+with st.sidebar:
+    st.header("Data Health")
+    health = tools.data_health()
+    # human-friendly summary + JSON view
+    if isinstance(health, dict):
+        if health.get("ok"):
+            st.success("✅ Data health: OK — FX coverage looks good.")
+        else:
+            if health.get("missing_files"):
+                st.error("❌ Missing files: " + ", ".join(health.get("missing_files")))
+            # show any missing fx rows per source
+            for k, v in health.items():
+                if k.startswith("missing_fx_rows_") and v:
+                    src = k.replace("missing_fx_rows_", "")
+                    st.warning(f"⚠️ {src}: {v} rows without FX rate")
+        with st.expander("Details", expanded=False):
+            st.json(health)
+    else:
+        # older string message
+        st.write(health)
+    st.divider()
+    st.header("Export")
+    month_for_pdf = st.text_input("Month for PDF (e.g., June 2025)", value="")
+    if st.button("Export Board PDF"):
+        tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+        tools.export_pdf(tmp.name, month_for_pdf or None)
+        st.success("PDF generated.")
+        st.download_button("Download PDF", data=open(tmp.name, "rb").read(), file_name="board_pack.pdf", mime="application/pdf")
+        os.unlink(tmp.name)
+
+    # Clear chat helper
+    def _clear_chat():
+        if "history" in st.session_state:
+            st.session_state.history = []
+    st.button("Clear chat history", on_click=_clear_chat)
+
+    # Copy last answer (clean text) expander to keep main chat uncluttered
+    import re as _re
+    def _strip_md(s: str) -> str:
+        s2 = _re.sub(r"\*\*(.*?)\*\*", r"\1", s)
+        s2 = _re.sub(r"\*(.*?)\*", r"\1", s2)
+        return s2
+
+    last_assistant = None
+    if "history" in st.session_state:
+        for it in reversed(st.session_state.history):
+            if it and it[0] == "assistant":
+                last_assistant = it[1]
+                break
+    with st.expander("Copy last answer (clean text)", expanded=False):
+        if last_assistant:
+            st.text_area("",
+                         value=_strip_md(last_assistant),
+                         height=80,
+                         label_visibility="collapsed")
+            st.caption("Tip: Use ⌘/Ctrl+C to copy.")
+        else:
+            st.caption("Ask a question to see the latest answer here.")
+
+st.markdown("""
+Ask about **Revenue vs Budget**, **Gross Margin % trend**, **Opex breakdown**, or **Cash runway**.
+
+**Examples**
+- What was June 2025 revenue vs budget in USD?
+- Show Gross Margin % trend for the last 3 months.
+- Break down Opex by category for June 2025.
+- What is our cash runway right now?
+""")
+
+if "history" not in st.session_state:
+    st.session_state.history = []
+
+query = st.chat_input("Type your question...")
+if query:
+    st.session_state.history.append(("user", query))
+    intent, params = route_query(query)
+
+    if intent == "revenue_vs_budget":
+        text, fig = tools.get_revenue_vs_budget(month=params.get("month"))
+    elif intent == "gross_margin_trend":
+        text, fig = tools.get_gross_margin_trend(last_n=params.get("last_n", 3))
+    elif intent == "opex_breakdown":
+        text, fig = tools.get_opex_breakdown(month=params.get("month"))
+    elif intent == "cash_runway":
+        text, fig = tools.get_cash_runway()
+    elif intent == "ebitda":
+        text, fig = tools.get_ebitda(month=params.get("month"))
+    else:
+        text, fig = ("I can answer: Revenue vs Budget, Gross Margin % trend, Opex breakdown, EBITDA, and Cash runway.", None)
+
+    st.session_state.history.append(("assistant", text, fig, intent))
+
+for item in st.session_state.history:
+    role = item[0]
+    if role == "user":
+        with st.chat_message("user"):
+            st.write(item[1])
+    else:
+        with st.chat_message("assistant"):
+            # Render structured metrics first (clean, no markdown), then a plain sentence.
+            intent = item[3] if len(item) > 3 else None
+
+            def _strip_md(s: str) -> str:
+                s2 = re.sub(r"\*\*(.*?)\*\*", r"\1", s)
+                s2 = re.sub(r"\*(.*?)\*", r"\1", s2)
+                return s2
+
+            def _metrics_revenue_vs_budget(text: str):
+                m = re.findall(r"\$([0-9,]+(?:\.\d{2})?)", text)
+                p = re.search(r"([+-]?[0-9]+(?:\.[0-9]+)?)%", text)
+                if len(m) >= 2:
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("Revenue (USD)", f"${m[0]}")
+                    with col2:
+                        st.metric("Budget (USD)", f"${m[1]}")
+                    if p:
+                        pct = p.group(1)
+                        st.metric("Var vs plan", f"{pct}%", delta=f"{pct}%")
+
+            def _metrics_ebitda(text: str):
+                vals = re.findall(r"\$([0-9,]+(?:\.\d{2})?)", text)
+                # order expected: EBITDA, Revenue, COGS, Opex
+                if len(vals) >= 4:
+                    ebitda, rev, cogs, opex = vals[0], vals[1], vals[2], vals[3]
+                    col1, col2, col3, col4 = st.columns(4)
+                    col1.metric("EBITDA", f"${ebitda}")
+                    col2.metric("Revenue", f"${rev}")
+                    col3.metric("COGS", f"${cogs}")
+                    col4.metric("Opex", f"${opex}")
+
+            def _metrics_cash_runway(text: str):
+                runway = re.search(r"runway:\s*\*\*?([0-9]+(?:\.[0-9]+)?)\s*months\*\*?", text, re.IGNORECASE)
+                cash = re.search(r"cash\s*\*\*?\$([0-9,]+)\*\*?", text, re.IGNORECASE)
+                burn = re.search(r"burn.*?\*\*?\$([0-9,]+)\*\*?/mo", text, re.IGNORECASE)
+                col1, col2, col3 = st.columns(3)
+                if runway:
+                    col1.metric("Runway (months)", runway.group(1))
+                if cash:
+                    col2.metric("Cash", f"${cash.group(1)}")
+                if burn:
+                    col3.metric("Avg burn/mo", f"${burn.group(1)}")
+
+            if intent == "revenue_vs_budget":
+                _metrics_revenue_vs_budget(item[1])
+                # Custom clean summary for revenue vs budget
+                stripped = _strip_md(item[1])
+                m = re.findall(r"\$([0-9,]+(?:\.\d{2})?)", stripped)
+                p = re.search(r"([+-]?[0-9]+(?:\.[0-9]+)?)%", stripped)
+                if len(m) >= 2 and p:
+                    month_text = re.search(r"^([A-Za-z]+ \d{4})", stripped)
+                    month = month_text.group(1) if month_text else "This month"
+                    st.write(f"💰 {month} revenue was ${m[0]} vs budget ${m[1]} ({p.group(1)}% vs plan)")
+                else:
+                    st.write(stripped)
+            elif intent == "ebitda":
+                _metrics_ebitda(item[1])
+                # Custom clean summary for EBITDA
+                stripped = _strip_md(item[1])
+                vals = re.findall(r"\$([0-9,]+(?:\.\d{2})?)", stripped)
+                if len(vals) >= 4:
+                    month_text = re.search(r"^([A-Za-z]+ \d{4})", stripped)
+                    month = month_text.group(1) if month_text else "This month"
+                    st.write(f"📊 {month} EBITDA: ${vals[0]} (Revenue ${vals[1]} - COGS ${vals[2]} - Opex ${vals[3]})")
+                else:
+                    st.write(stripped)
+            elif intent == "cash_flow":
+                _metrics_cash_flow(item[1])
+                # Custom clean summary for Cash Flow
+                stripped = _strip_md(item[1])
+                vals = re.findall(r"\$([0-9,]+(?:\.\d{2})?)", stripped)
+                if len(vals) >= 3:
+                    month_text = re.search(r"^([A-Za-z]+ \d{4})", stripped)
+                    month = month_text.group(1) if month_text else "This month"
+                    st.write(f"� {month} Cash Flow: ${vals[0]} (Operating ${vals[1]} + Investing ${vals[2]})")
+                else:
+                    st.write(stripped)
+            elif intent == "gross_margin_trend":
+                # Clean summary for GM trend
+                st.write(f"📈 {_strip_md(item[1])}")
+            elif intent == "opex_breakdown":
+                # Clean summary for Opex
+                st.write(f"💼 {_strip_md(item[1])}")
+            else:
+                # Fallback for other intents
+                st.write(_strip_md(item[1]))
+
+            if len(item) > 2 and item[2] is not None:
+                st.pyplot(item[2])
