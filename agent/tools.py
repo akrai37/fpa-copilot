@@ -168,8 +168,19 @@ def _to_usd(df: pd.DataFrame, fx: pd.DataFrame, amount_col: str, out_col: str) -
     merged = df2.merge(fx2[["_mstr","_cur","usd_rate"]], on=["_mstr","_cur"], how="left")
     merged = merged.drop(columns=["_mstr","_cur"])  # keep original month/currency columns
     amt = amount_col if amount_col in merged.columns else ("amount" if "amount" in merged.columns else None)
+    # If there's no recognized amount column, return merged with a NaN out_col so callers don't KeyError
     if amt is None:
+        merged[out_col] = np.nan
         return merged
+
+    # Coerce numeric types safely
+    merged[amt] = pd.to_numeric(merged[amt], errors="coerce").fillna(0.0)
+    if "usd_rate" not in merged.columns:
+        merged["usd_rate"] = 1.0
+    else:
+        merged["usd_rate"] = pd.to_numeric(merged["usd_rate"], errors="coerce").fillna(1.0)
+
+    # Compute USD amount, defaulting missing rates to 1.0
     merged[out_col] = merged[amt] * merged["usd_rate"]
     return merged
 
@@ -249,19 +260,50 @@ def get_gross_margin_trend(last_n: int = 3) -> Tuple[str, Optional[plt.Figure]]:
     if gm_pct.empty:
         return "Not enough data to compute Gross Margin %.", None
 
-    tail = gm_pct.sort_index().tail(last_n)
+    # Sort by month and anchor to current month (exclude any future months in fixtures)
+    gm_sorted = gm_pct.sort_index()
+    try:
+        today_period = pd.Period(pd.Timestamp.today(), freq="M")
+        gm_anchor = gm_sorted[gm_sorted.index <= today_period]
+        if not gm_anchor.empty:
+            gm_sorted = gm_anchor
+    except Exception:
+        # If Period.today isn't available in environment, fall back to using all data
+        pass
+
+    tail = gm_sorted.tail(last_n)
 
     fig, ax = plt.subplots(figsize=(6,3))
-    ax.plot([p.to_timestamp() for p in tail.index], tail.values, marker="o")
-    ax.set_title(f"Gross Margin % — last {len(tail)} months")
+    x_vals = [p.to_timestamp() for p in tail.index]
+    y_vals = tail.values
+    ax.plot(x_vals, y_vals, marker="o")
+    # Build a friendly month range for the title, e.g., "Apr 2025 – Sep 2025"
+    try:
+        start_label = tail.index[0].strftime('%b %Y')
+        end_label = tail.index[-1].strftime('%b %Y')
+        title_range = f"{start_label} – {end_label}"
+    except Exception:
+        title_range = f"last {len(tail)} months"
+    ax.set_title(f"Gross Margin % — {title_range}")
     ax.set_ylabel("%")
     ax.set_xlabel("Month")
     ax.grid(True, linestyle="--", linewidth=0.5)
+    # Use default y-axis scaling for a simple, clean look (no custom headroom)
+
+    # No on-chart text annotations; keep the plot clean as originally
     fig.autofmt_xdate()
     fig.tight_layout()
 
-    seq = " → ".join([f"{v:.1f}%" for v in tail.values])
-    text = f"Gross Margin % last {len(tail)} months: **{seq}**."
+    # Use higher precision in text so small fluctuations visible on the chart are reflected in the summary
+    seq = " → ".join([f"{v:.3f}%" for v in tail.values])
+    try:
+        start_label = tail.index[0].strftime('%b %Y')
+        end_label = tail.index[-1].strftime('%b %Y')
+        window_label = f"from {start_label} to {end_label}"
+    except Exception:
+        window_label = f"last {len(tail)} months"
+    unit = "month" if len(tail) == 1 else "months"
+    text = f"Gross Margin % last {len(tail)} {unit} ({window_label}): **{seq}**."
     return text, fig
 
 def get_opex_breakdown(month: Optional[str]) -> Tuple[str, Optional[plt.Figure]]:

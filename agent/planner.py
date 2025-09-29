@@ -34,6 +34,7 @@ def _latest_year_from_data() -> Optional[int]:
         return None
 
 MONTH_REGEX = re.compile(r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)[a-z]*\s+\d{4}", re.IGNORECASE)
+MONTH_WORD = re.compile(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|sept|oct|nov|dec)[a-z]*\b", re.IGNORECASE)
 ISO_YYYY_MM = re.compile(r"\b(\d{4})-(0[1-9]|1[0-2])\b")
 QUARTER_REGEX = re.compile(r"\b(q[1-4])\s*(\d{4})\b", re.IGNORECASE)
 
@@ -45,9 +46,9 @@ SYNONYMS = {
     "breakdown": {"breakdown", "split", "by category", "category"},
     "cash_runway": {"cash runway", "runway", "months runway"},
 }
-LAST_N_REGEX = re.compile(r"last\s+(\d+)\s+months?", re.IGNORECASE)
-# Also accept generic forms like "6 months" (e.g., "cash runway 6 months")
-GENERIC_N_MONTHS = re.compile(r"\b(\d+)\s+months?\b", re.IGNORECASE)
+LAST_N_REGEX = re.compile(r"last\s+(\d+)\s*months?", re.IGNORECASE)
+# Also accept generic forms like "6 months" or "6months"
+GENERIC_N_MONTHS = re.compile(r"\b(\d+)\s*months?\b", re.IGNORECASE)
 
 def _normalize_month(text: str) -> Optional[str]:
     # Qx YYYY support
@@ -79,22 +80,21 @@ def _normalize_month(text: str) -> Optional[str]:
                     return f"{latest:04d}-{dt.month:02d}"
             return dt.strftime("%Y-%m")
 
-        # Try full-text parse
-        dt = (dateparser.parse(text) if dateparser else None)
-        if dt is None:
-            dt = dtparser.parse(text, fuzzy=True)
-        if dt and getattr(dt, 'month', None):
-            # If text contains a year, return it directly
-            has_year = re.search(r"\b\d{4}\b", text)
-            if has_year:
-                return dt.strftime("%Y-%m")
-            # no explicit year in text -> infer latest year from data
-            latest = _latest_year_from_data()
-            if latest:
-                return f"{latest:04d}-{dt.month:02d}"
-            # fallback to parsed year if available
-            if getattr(dt, 'year', None):
-                return dt.strftime("%Y-%m")
+        # Try full-text parse only if there's an explicit month word or a clear date-like indicator
+        has_month_word = MONTH_WORD.search(text) is not None
+        has_year_token = re.search(r"\b\d{4}\b", text) is not None
+        if has_month_word or has_year_token:
+            dt = (dateparser.parse(text) if dateparser else None)
+            if dt is None:
+                dt = dtparser.parse(text, fuzzy=True)
+            if dt and getattr(dt, 'month', None):
+                if has_year_token:
+                    return dt.strftime("%Y-%m")
+                latest = _latest_year_from_data()
+                if latest:
+                    return f"{latest:04d}-{dt.month:02d}"
+                if getattr(dt, 'year', None):
+                    return dt.strftime("%Y-%m")
     except Exception:
         pass
     return None
@@ -158,8 +158,12 @@ def route_query(question: str) -> Tuple[str, Dict[str, Any]]:
         month = _normalize_month(question)
         return "opex_breakdown", {"month": month}
 
-    # If user says just 'breakdown' (with or without month), assume Opex breakdown
+    # If user mentions 'breakdown' with revenue/budget, treat it as revenue vs budget (not Opex)
     if any(s in q for s in SYNONYMS["breakdown"]):
+        if any(s in q for s in SYNONYMS["revenue"]) or any(s in q for s in SYNONYMS["budget"]):
+            month = _normalize_month(question)
+            return "revenue_vs_budget", {"month": month}
+        # Otherwise, default 'breakdown' to Opex
         month = _normalize_month(question)
         return "opex_breakdown", {"month": month}
 
@@ -173,6 +177,18 @@ def route_query(question: str) -> Tuple[str, Dict[str, Any]]:
         month = _normalize_month(question)
         if month or any(s in q for s in SYNONYMS["budget"]) or " vs " in f" {q} ":
             return "revenue_vs_budget", {"month": month}
+
+    # If user only provided a month/date and no clear metric, do not guess — let UI prompt
+    has_metric = (
+        any(s in q for s in SYNONYMS["revenue"]) or
+        any(s in q for s in SYNONYMS["opex"]) or
+        any(s in q for s in SYNONYMS["gross_margin"]) or
+        ("ebitda" in q) or
+        any(s in q for s in SYNONYMS["cash_runway"]) or
+        any(s in q for s in SYNONYMS["breakdown"])  # breakdown implies opex
+    )
+    if not has_metric and _normalize_month(question):
+        return "fallback", {}
 
     # 3) RAG retrieval only if rules above didn't determine intent
     if route_with_rag is not None:
@@ -188,10 +204,18 @@ def route_query(question: str) -> Tuple[str, Dict[str, Any]]:
                 if intent == "gross_margin_trend":
                     ln = _extract_last_n(q, default=params.get("last_n", 3))
                     params["last_n"] = ln
-                # If the query contains only a date-like phrase and no clear metric keywords,
-                # return fallback to trigger UI disambiguation instead of guessing.
-                has_metric = any(s in q for s in SYNONYMS["revenue"]) or any(s in q for s in SYNONYMS["opex"]) or any(s in q for s in SYNONYMS["gross_margin"]) or ("ebitda" in q) or any(s in q for s in SYNONYMS["cash_runway"])
-                if not has_metric and _normalize_month(question):
+                # Guardrail: if there are no metric keywords and no obvious date/window tokens,
+                # avoid routing to a metric based solely on RAG; return fallback instead.
+                has_metric = (
+                    any(s in q for s in SYNONYMS["revenue"]) or
+                    any(s in q for s in SYNONYMS["opex"]) or
+                    any(s in q for s in SYNONYMS["gross_margin"]) or
+                    ("ebitda" in q) or
+                    any(s in q for s in SYNONYMS["cash_runway"])
+                )
+                has_month = _normalize_month(question) is not None
+                has_window = (LAST_N_REGEX.search(q) is not None) or (GENERIC_N_MONTHS.search(q) is not None)
+                if not has_metric and not has_month and not has_window:
                     return "fallback", {}
                 return intent, params
         except Exception:

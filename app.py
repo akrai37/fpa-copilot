@@ -16,7 +16,7 @@ def _clear_chat():
     if "history" in st.session_state:
         st.session_state.history = []
 
-# (no URL query param behavior) clear action is triggered via the sidebar button below
+
 
 # (no URL query param behavior) clear action is triggered via the sidebar button below
 
@@ -180,10 +180,11 @@ if query:
         except Exception:
             disp_month = None
         if disp_month:
+            iso = m  # 'YYYY-MM'
             msg = (
                 f"Got {disp_month}. What would you like to see?\n"
                 f"- Revenue vs Budget\n- Opex breakdown\n- EBITDA\n- Gross Margin % trend\n- Cash runway\n\n"
-                f"You can also say things like: 'Revenue vs Budget for {disp_month}'."
+                f"You can also say things like: 'Revenue vs Budget for {disp_month}' or 'Revenue vs Budget for {iso}'."
             )
         else:
             msg = (
@@ -328,8 +329,8 @@ for item in st.session_state.history:
                 else:
                     _render_summary_code(stripped)
             elif intent == "gross_margin_trend":
-                # Clean summary for GM trend (monospace)
-                _render_summary_code(f"Gross margin trend: {_sanitize_text(_strip_md(item[1]))}")
+                # Clean summary for GM trend (monospace) — revert to displaying the tool text directly
+                _render_summary_code(_sanitize_text(_strip_md(item[1])))
             elif intent == "opex_breakdown":
                 # Render Opex in a terminal/Jupyter-like monospaced box
                 def _render_opex_code_block(raw: str):
