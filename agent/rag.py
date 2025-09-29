@@ -42,7 +42,10 @@ from agent import tools
 SYNONYMS = {
     "revenue": ["revenue", "sales", "topline", "turnover"],
     "budget": ["budget", "plan", "target"],
-    "opex": ["opex", "operating expenses", "operating expense", "breakdown", "by category", "split"],
+    "opex": [
+        "opex", "operating expenses", "operating expense", "breakdown", "by category", "split",
+        "expenses", "costs", "cost", "expense categories", "cost center", "expense breakdown", "by function", "by department",
+    ],
     "gm": ["gross margin", "gm", "gm%", "margin%"],
     "cash_runway": ["cash runway", "runway", "run out of cash", "months left"],
     "ebitda": ["ebitda", "earnings before interest tax depreciation amortization"],
@@ -97,9 +100,19 @@ def _available_recent_months(limit: int = 12) -> List[str]:
     months = set()
     for k in ("actuals", "budget"):
         df = dfs.get(k)
-        if df is not None and "month" in df.columns:
-            s = pd.to_datetime(df["month"], errors="coerce").dt.to_period("M").dropna().astype(str)
+        if df is None or "month" not in df.columns:
+            continue
+        try:
+            col = df["month"]
+            # If already Period dtype, just cast to string
+            if pd.api.types.is_period_dtype(col.dtype):
+                s = col.dropna().astype(str)
+            else:
+                s = pd.to_datetime(col, errors="coerce").dt.to_period("M").dropna().astype(str)
             months.update(s.tolist())
+        except Exception:
+            # best-effort: skip this dataframe if parsing fails
+            continue
     recent = sorted(months, reverse=True)[:limit]
     # ensure most recent first
     return recent
@@ -111,6 +124,35 @@ def _safe_tool_text(callable_fn, *args, **kwargs) -> Optional[str]:
         return text
     except Exception:
         return None
+
+
+def _sanitize_text(s: Optional[str]) -> Optional[str]:
+    """Clean and normalize tool-generated text before indexing.
+
+    - Collapse repeated whitespace and internal newlines.
+    - Remove common invisible/control characters (zero-width, BOM, etc.).
+    - Fix numbers that were accidentally split by newlines/spaces like '2,24\n6,400' -> '2,246,400'.
+    Returns None if input is falsy.
+    """
+    if not s:
+        return s
+    try:
+        import re
+
+        # remove zero-width and other invisible characters
+        s = re.sub(r"[\u200B-\u200F\uFEFF\u2060]", "", s)
+        # normalize different kinds of dashes/spaces to simple ascii space
+        s = s.replace('\u2013', '-').replace('\u2014', '-')
+        # collapse CRLF and lone CR to LF, then collapse multiple newlines to a single space
+        s = s.replace('\r\n', '\n').replace('\r', '\n')
+        # Fix numbers: remove newlines or spaces between digits and commas/periods
+        # e.g., '2,24\n6,400' or '2,24 6,400' -> '2,246,400'
+        s = re.sub(r"(\d)[\n\r\s]+(?=\d)", r"\1", s)
+        # collapse any remaining runs of whitespace (including newlines) into single space
+        s = re.sub(r"\s+", " ", s).strip()
+        return s
+    except Exception:
+        return s
 
 
 @functools.lru_cache(maxsize=1)
@@ -129,6 +171,7 @@ def build_index() -> Dict[str, Any]:
         # Revenue vs Budget
         t1 = _safe_tool_text(tools.get_revenue_vs_budget, month=mstr)
         if t1:
+            t1 = _sanitize_text(t1)
             t1 = _enrich_text(t1, intent="revenue_vs_budget", month_str=mstr)
             docs.append({
                 "id": f"revbud-{mstr}",
@@ -140,6 +183,7 @@ def build_index() -> Dict[str, Any]:
         # Opex breakdown
         t2 = _safe_tool_text(tools.get_opex_breakdown, month=mstr)
         if t2:
+            t2 = _sanitize_text(t2)
             t2 = _enrich_text(t2, intent="opex_breakdown", month_str=mstr)
             docs.append({
                 "id": f"opex-{mstr}",
@@ -204,7 +248,20 @@ def build_index() -> Dict[str, Any]:
         except Exception:
             embeddings = None
 
-    return {"vectorizer": vectorizer, "matrix": matrix, "docs": docs, "embeddings": embeddings}
+    # Optional FAISS index (built from embeddings) for fast inner-product search
+    faiss_index = None
+    if embeddings is not None:
+        try:
+            import faiss  # type: ignore
+            import numpy as _np
+            dim = int(embeddings.shape[1])
+            # use inner-product on normalized vectors as cosine similarity
+            faiss_index = faiss.IndexFlatIP(dim)
+            faiss_index.add(_np.asarray(embeddings).astype("float32"))
+        except Exception:
+            faiss_index = None
+
+    return {"vectorizer": vectorizer, "matrix": matrix, "docs": docs, "embeddings": embeddings, "faiss_index": faiss_index}
 
 
 def retrieve(query: str, top_k: int = 3) -> List[Dict[str, Any]]:
@@ -256,12 +313,30 @@ def retrieve(query: str, top_k: int = 3) -> List[Dict[str, Any]]:
 
     # Otherwise, prefer embeddings if available, else TF-IDF
     scores = None
-    if idx.get("embeddings") is not None:
+    # Prefer FAISS if available
+    if idx.get("faiss_index") is not None:
+        try:
+            import numpy as _np
+            # query embedding
+            model = _get_embed_model()
+            if model is not None:
+                q_emb = model.encode([query], normalize_embeddings=True)[0].astype("float32")
+                # faiss search returns (scores, indices)
+                D, I = idx["faiss_index"].search(_np.expand_dims(q_emb, axis=0), min(len(idx["docs"]), top_k))
+                # build scores array aligned to docs order
+                scores = _np.zeros(len(idx["docs"]))
+                for s, i in zip(D[0], I[0]):
+                    if i >= 0:
+                        scores[i] = float(s)
+        except Exception:
+            scores = None
+
+    # If faiss not available or failed, try numpy dot product on stored embeddings
+    if scores is None and idx.get("embeddings") is not None:
         try:
             model = _get_embed_model()
             if model is not None:
                 q_emb = model.encode([query], normalize_embeddings=True)[0]
-                # cosine for normalized vectors is dot product
                 import numpy as _np
                 scores = (idx["embeddings"] @ _np.asarray(q_emb))
         except Exception:
@@ -279,6 +354,17 @@ def retrieve(query: str, top_k: int = 3) -> List[Dict[str, Any]]:
         month_docs = [dict(d, score=1.0) for d in idx["docs"] if d.get("params", {}).get("month") == m]
         if month_docs:
             return month_docs[:top_k]
+
+    # If a month was parsed from the query, boost docs that match that month so they're preferred
+    if m and scores is not None:
+        try:
+            import numpy as _np
+            for i, d in enumerate(idx["docs"]):
+                if d.get("params", {}).get("month") == m:
+                    # add an offset to ensure month docs outrank others (similarities are typically <= 1)
+                    scores[i] = float(scores[i]) + 1.0
+        except Exception:
+            pass
 
     order = scores.argsort()[::-1]
     out = []
