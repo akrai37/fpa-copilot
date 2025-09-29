@@ -1,8 +1,9 @@
 import streamlit as st
-from agent.planner import route_query
+from agent.planner import route_query, _normalize_month
 from agent import tools
 import re
 import unicodedata
+import html as _html
 import tempfile, os
 import pandas as pd
 
@@ -47,6 +48,11 @@ with st.sidebar:
         st.write(health)
 
     st.divider()
+    # Debugging helpers for RAG
+    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
+    show_rag_debug = st.checkbox("Show routing & retrieval debug", value=False)
+    # Option: if enabled, month-only queries (e.g., "June") will default to Revenue vs Budget
+    prefer_month_default = st.checkbox("Auto-assume month-only queries as 'Revenue vs Budget'", value=False)
     # Add extra top spacing so the Export section is visually separated from the controls above
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
     st.header("Export")
@@ -101,26 +107,93 @@ Ask about **Revenue vs Budget**, **Gross Margin % trend**, **Opex breakdown**, o
 
 if "history" not in st.session_state:
     st.session_state.history = []
+if "pending_intent" not in st.session_state:
+    st.session_state.pending_intent = None
+    st.session_state.pending_params = {}
 
 query = st.chat_input("Type your question...")
 if query:
     st.session_state.history.append(("user", query))
     intent, params = route_query(query)
 
-    if intent == "revenue_vs_budget":
-        text, fig = tools.get_revenue_vs_budget(month=params.get("month"))
-    elif intent == "gross_margin_trend":
-        text, fig = tools.get_gross_margin_trend(last_n=params.get("last_n", 3))
-    elif intent == "opex_breakdown":
-        text, fig = tools.get_opex_breakdown(month=params.get("month"))
-    elif intent == "cash_runway":
-        text, fig = tools.get_cash_runway()
-    elif intent == "ebitda":
-        text, fig = tools.get_ebitda(month=params.get("month"))
-    else:
-        text, fig = ("I can answer: Revenue vs Budget, Gross Margin % trend, Opex breakdown, EBITDA, and Cash runway.", None)
+    # Helper: intents that need a month
+    def _needs_month(i: str) -> bool:
+        return i in {"revenue_vs_budget", "opex_breakdown", "ebitda"}
 
-    st.session_state.history.append(("assistant", text, fig, intent))
+    # Parse month from the raw query (month-only follow-ups like "June 2025")
+    try:
+        parsed_month_inline = _normalize_month(query)
+    except Exception:
+        parsed_month_inline = None
+
+    # If we previously asked for a month (pending intent) and the user sent just a month,
+    # fulfill the pending intent directly without disambiguation.
+    if intent == "fallback" and st.session_state.get("pending_intent") and parsed_month_inline:
+        intent = st.session_state.pending_intent
+        params = dict(st.session_state.pending_params or {})
+        if params.get("month") is None:
+            params["month"] = parsed_month_inline
+        # clear pending
+        st.session_state.pending_intent = None
+        st.session_state.pending_params = {}
+
+    # If routing fell back and the user typed a month (e.g., 'June 2025'), offer quick choices
+    # Only show the disambiguation UI when there is no pending intent to fulfill.
+    if intent == "fallback":
+        parsed_month = parsed_month_inline
+        if parsed_month:
+            if not st.session_state.get("pending_intent"):
+                # If user prefers auto-default, route month-only queries directly to Revenue vs Budget
+                if 'prefer_month_default' in locals() and prefer_month_default:
+                    # announce the auto-selection and set intent accordingly
+                    st.session_state.history.append(("assistant", f"I detected month: {parsed_month}. Auto-selecting Revenue vs Budget as your default.", None, "disambiguation"))
+                    intent, params = "revenue_vs_budget", {"month": parsed_month}
+                else:
+                    # Format a friendly label alongside the normalized month
+                    try:
+                        _disp_month = pd.Period(parsed_month, freq="M").strftime('%B %Y')
+                    except Exception:
+                        _disp_month = parsed_month
+                    # show quick choice buttons to disambiguate what the user wants for that month (use normalized YYYY-MM display)
+                    st.session_state.history.append(("assistant", f"I detected month: {parsed_month} ({_disp_month}). What would you like to see for {parsed_month}?", None, "disambiguation"))
+                # store the parsed month for reference; no quick-action buttons are rendered
+                st.session_state._parsed_month = parsed_month
+
+    # If user wants debug info, attach RAG retrieval hints into the session (non-sensitive)
+    try:
+        if 'show_rag_debug' in locals() and show_rag_debug:
+            from agent import rag as _rag
+            retrieved = _rag.retrieve(query, top_k=5)
+            # store in session_state to render with assistant message
+            st.session_state.last_retrieved = retrieved
+        else:
+            st.session_state.last_retrieved = []
+    except Exception:
+        st.session_state.last_retrieved = []
+
+    # If this intent needs a month and it's missing, remember it as pending so a month-only follow-up fulfills it.
+    if intent != "fallback" and _needs_month(intent) and not params.get("month"):
+        st.session_state.pending_intent = intent
+        st.session_state.pending_params = dict(params)
+
+    # Determine whether to proceed with generating a response
+    proceed_response = intent != "fallback"
+
+    if proceed_response:
+        if intent == "revenue_vs_budget":
+            text, fig = tools.get_revenue_vs_budget(month=params.get("month"))
+        elif intent == "gross_margin_trend":
+            text, fig = tools.get_gross_margin_trend(last_n=params.get("last_n", 3))
+        elif intent == "opex_breakdown":
+            text, fig = tools.get_opex_breakdown(month=params.get("month"))
+        elif intent == "cash_runway":
+            text, fig = tools.get_cash_runway()
+        elif intent == "ebitda":
+            text, fig = tools.get_ebitda(month=params.get("month"))
+        else:
+            text, fig = ("I can answer: Revenue vs Budget, Gross Margin % trend, Opex breakdown, EBITDA, and Cash runway.", None)
+
+        st.session_state.history.append(("assistant", text, fig, intent))
 
 for item in st.session_state.history:
     role = item[0]
@@ -209,11 +282,10 @@ for item in st.session_state.history:
                     _sm_small(col3, "Avg burn/mo", f"${burn.group(1)}")
 
             def _render_summary_code(s: str, pad: bool = True):
-                # Show a sanitized monospaced summary with optional top padding
+                # Revert to the original Streamlit code block rendering
                 txt = _sanitize_text(_strip_md(s)) if isinstance(s, str) else s
                 if pad:
                     st.markdown("<div style='height:8px'></div>", unsafe_allow_html=True)
-                # Revert to simple code block rendering
                 st.code(txt)
 
             if intent == "revenue_vs_budget":
@@ -260,6 +332,9 @@ for item in st.session_state.history:
                 # Render Opex in a terminal/Jupyter-like monospaced box
                 def _render_opex_code_block(raw: str):
                     stripped = _sanitize_text(_strip_md(raw))
+                    # Collapse stray newlines/CRs that can appear inside amounts (e.g. "R&D $2\n,246,400")
+                    # This keeps the parsing logic robust and prevents character-by-character wrapping in the UI.
+                    stripped = stripped.replace('\r', '').replace('\n', ' ')
                     # Try to parse: Month, Total Opex, and category amounts from parentheses
                     month_m = re.search(r"^([A-Za-z]+\s+\d{4})", stripped)
                     total_m = re.search(r"Opex:\s*\$([0-9,]+(?:\.\d{2})?)", stripped, re.IGNORECASE)
@@ -270,11 +345,12 @@ for item in st.session_state.history:
                         total = total_m.group(1) if total_m else None
                         pairs = []
                         if cats_m:
-                            parts = [p.strip() for p in cats_m.group(1).split(",")]
-                            for p in parts:
-                                m = re.match(r"\s*([A-Za-z0-9 &/\-]+)\s*\$([0-9,]+(?:\.\d{2})?)\s*", p)
-                                if m:
-                                    pairs.append((m.group(1), m.group(2)))
+                            inner = cats_m.group(1)
+                            # Find all occurrences of "Name $amount" without splitting by commas in the amount
+                            for m in re.finditer(r"([A-Za-z0-9 &/\-]+)\s*\$([0-9][0-9,]*(?:\.\d{2})?)", inner):
+                                name = m.group(1).strip()
+                                amt = m.group(2)
+                                pairs.append((name, amt))
 
                         # If parsing fails, just show sanitized text in styled code block
                         if not total and not pairs:
@@ -299,6 +375,13 @@ for item in st.session_state.history:
             else:
                 # Fallback for other intents: render monospace summary
                 _render_summary_code(item[1])
+
+            # Render RAG debug cards (if present and enabled)
+            if show_rag_debug and st.session_state.get("last_retrieved"):
+                with st.expander("Retrieved docs (RAG)"):
+                    for d in st.session_state.get("last_retrieved", []):
+                        st.write(f"- {d.get('title')} (id={d.get('id')}, score={d.get('score'):.3f})")
+                        st.write(d.get('text')[:500] + ("..." if len(d.get('text',''))>500 else ""))
 
             if len(item) > 2 and item[2] is not None:
                 st.pyplot(item[2])

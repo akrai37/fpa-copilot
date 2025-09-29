@@ -300,8 +300,24 @@ def get_opex_breakdown(month: Optional[str]) -> Tuple[str, Optional[plt.Figure]]
     fig.tight_layout()
 
     total = agg.sum()
-    parts = ", ".join([f"{k} {_fmt_money(v)}" for k, v in agg.items()])
-    text = f"{m.strftime('%B %Y')} Opex: **{_fmt_money(total)}** ({parts})."
+    # Sanitize category keys and formatted money to remove control/zero-width/newline chars
+    def _clean(s: str) -> str:
+        if s is None:
+            return ""
+        # remove common control characters (CR/LF, TAB) and zero-width spaces
+        for ch in ['\r', '\n', '\t', '\u200b', '\u200c', '\u200d', '\ufeff']:
+            s = s.replace(ch, ' ')
+        # collapse multiple spaces
+        s = ' '.join(s.split())
+        return s
+
+    parts_list = []
+    for k, v in agg.items():
+        cat = _clean(str(k))
+        money = _clean(_fmt_money(v))
+        parts_list.append(f"{cat} {money}")
+    parts = ", ".join(parts_list)
+    text = f"{m.strftime('%B %Y')} Opex: **{_clean(_fmt_money(total))}** ({parts})."
     return text, fig
 
 def get_cash_runway() -> Tuple[str, Optional[plt.Figure]]:

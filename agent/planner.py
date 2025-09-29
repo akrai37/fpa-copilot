@@ -9,6 +9,15 @@ try:
 except Exception:
     dateparser = None
 from dateutil import parser as dtparser
+# Optional LLM-assisted router then RAG fallback
+try:
+    from agent.llm_router import parse_query_with_llm
+except Exception:
+    parse_query_with_llm = None
+try:
+    from agent.rag import route_with_rag
+except Exception:
+    route_with_rag = None
 # lazy import helper to avoid circular work at import time
 def _latest_year_from_data() -> Optional[int]:
     try:
@@ -99,8 +108,36 @@ def _extract_last_n(text: str, default: int = 3) -> int:
 
 def route_query(question: str) -> Tuple[str, Dict[str, Any]]:
     q = question.lower()
+    # Phrase normalization map: common multi-word phrases -> canonical token
+    PHRASE_MAP = {
+        "break down": "breakdown",
+        "run out of cash": "runway",
+        "months left": "runway",
+        "months remaining": "runway",
+        "year on year": "yoy",
+        "year-over-year": "yoy",
+    }
+    for a, b in PHRASE_MAP.items():
+        q = q.replace(a, b)
 
-    # EBITDA
+    # 1) Optional: LLM-assisted parsing to map messy English to structured intent/params
+    if parse_query_with_llm is not None:
+        try:
+            parsed = parse_query_with_llm(question)
+            if parsed is not None:
+                intent, params = parsed
+                # Light normalization for month if present as free text
+                if intent in {"revenue_vs_budget", "opex_breakdown", "ebitda"} and not params.get("month"):
+                    m = _normalize_month(question)
+                    if m:
+                        params["month"] = m
+                if intent == "gross_margin_trend" and not params.get("last_n"):
+                    params["last_n"] = _extract_last_n(q, default=3)
+                return intent, params
+        except Exception:
+            pass
+
+    # 2) Deterministic keyword rules (safety & tests)
     if "ebitda" in q:
         month = _normalize_month(question)
         return "ebitda", {"month": month}
@@ -116,8 +153,43 @@ def route_query(question: str) -> Tuple[str, Dict[str, Any]]:
         month = _normalize_month(question)
         return "opex_breakdown", {"month": month}
 
-    if any(s in q for s in SYNONYMS["revenue"]) and (any(s in q for s in SYNONYMS["budget"]) or " vs " in f" {q} "):
+    # If user says just 'breakdown' (with or without month), assume Opex breakdown
+    if any(s in q for s in SYNONYMS["breakdown"]):
         month = _normalize_month(question)
-        return "revenue_vs_budget", {"month": month}
+        return "opex_breakdown", {"month": month}
+
+    # If the query mentions Opex at all, prefer Opex breakdown (month may be missing)
+    if any(s in q for s in SYNONYMS["opex"]):
+        month = _normalize_month(question)
+        return "opex_breakdown", {"month": month}
+
+    # Revenue intent: be permissive — if user says revenue and includes a month, assume revenue vs budget
+    if any(s in q for s in SYNONYMS["revenue"]):
+        month = _normalize_month(question)
+        if month or any(s in q for s in SYNONYMS["budget"]) or " vs " in f" {q} ":
+            return "revenue_vs_budget", {"month": month}
+
+    # 3) RAG retrieval only if rules above didn't determine intent
+    if route_with_rag is not None:
+        try:
+            rag = route_with_rag(question)
+            if rag is not None:
+                intent, params = rag
+                # refine params as above
+                if intent in {"revenue_vs_budget", "opex_breakdown", "ebitda"}:
+                    m = _normalize_month(question)
+                    if m:
+                        params["month"] = m
+                if intent == "gross_margin_trend":
+                    ln = _extract_last_n(q, default=params.get("last_n", 3))
+                    params["last_n"] = ln
+                # If the query contains only a date-like phrase and no clear metric keywords,
+                # return fallback to trigger UI disambiguation instead of guessing.
+                has_metric = any(s in q for s in SYNONYMS["revenue"]) or any(s in q for s in SYNONYMS["opex"]) or any(s in q for s in SYNONYMS["gross_margin"]) or ("ebitda" in q) or any(s in q for s in SYNONYMS["cash_runway"])
+                if not has_metric and _normalize_month(question):
+                    return "fallback", {}
+                return intent, params
+        except Exception:
+            pass
 
     return "fallback", {}
