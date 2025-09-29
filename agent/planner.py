@@ -46,6 +46,8 @@ SYNONYMS = {
     "cash_runway": {"cash runway", "runway", "months runway"},
 }
 LAST_N_REGEX = re.compile(r"last\s+(\d+)\s+months?", re.IGNORECASE)
+# Also accept generic forms like "6 months" (e.g., "cash runway 6 months")
+GENERIC_N_MONTHS = re.compile(r"\b(\d+)\s+months?\b", re.IGNORECASE)
 
 def _normalize_month(text: str) -> Optional[str]:
     # Qx YYYY support
@@ -99,6 +101,8 @@ def _normalize_month(text: str) -> Optional[str]:
 
 def _extract_last_n(text: str, default: int = 3) -> int:
     m = LAST_N_REGEX.search(text)
+    if not m:
+        m = GENERIC_N_MONTHS.search(text)
     if m:
         try:
             return max(1, int(m.group(1)))
@@ -143,7 +147,8 @@ def route_query(question: str) -> Tuple[str, Dict[str, Any]]:
         return "ebitda", {"month": month}
 
     if any(s in q for s in SYNONYMS["cash_runway"]) or ("runway" in q and "cash" in q):
-        return "cash_runway", {}
+        last_n = _extract_last_n(q, default=3)
+        return "cash_runway", {"last_n": last_n}
 
     if any(s in q for s in SYNONYMS["gross_margin"]):
         last_n = _extract_last_n(q, default=3)

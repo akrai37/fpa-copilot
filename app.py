@@ -1,4 +1,5 @@
 import streamlit as st
+import streamlit.components.v1 as components
 from agent.planner import route_query, _normalize_month
 from agent import tools
 import re
@@ -48,11 +49,6 @@ with st.sidebar:
         st.write(health)
 
     st.divider()
-    # Debugging helpers for RAG
-    st.markdown("<div style='height:6px'></div>", unsafe_allow_html=True)
-    show_rag_debug = st.checkbox("Show routing & retrieval debug", value=False)
-    # Option: if enabled, month-only queries (e.g., "June") will default to Revenue vs Budget
-    prefer_month_default = st.checkbox("Auto-assume month-only queries as 'Revenue vs Budget'", value=False)
     # Add extra top spacing so the Export section is visually separated from the controls above
     st.markdown("<div style='height:12px'></div>", unsafe_allow_html=True)
     st.header("Export")
@@ -73,23 +69,24 @@ with st.sidebar:
         if month_input and norm_month is None:
             st.error("Invalid month. Please enter like 'June 2025' or '2025-06'.")
         else:
-            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-            try:
-                tools.export_pdf(tmp.name, norm_month)
-                st.success("PDF generated.")
-                st.download_button(
-                    "Download PDF",
-                    data=open(tmp.name, "rb").read(),
-                    file_name="board_pack.pdf",
-                    mime="application/pdf",
-                )
-            except Exception:
-                st.error("Couldn't generate PDF. Please try again with a valid month like 'June 2025'.")
-            finally:
+            with st.spinner("Generating PDF..."):
+                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
                 try:
-                    os.unlink(tmp.name)
+                    tools.export_pdf(tmp.name, norm_month)
+                    st.success("PDF generated.")
+                    st.download_button(
+                        "Download PDF",
+                        data=open(tmp.name, "rb").read(),
+                        file_name="board_pack.pdf",
+                        mime="application/pdf",
+                    )
                 except Exception:
-                    pass
+                    st.error("Couldn't generate PDF. Please try again with a valid month like 'June 2025'.")
+                finally:
+                    try:
+                        os.unlink(tmp.name)
+                    except Exception:
+                        pass
 
     # ...sidebar continues (other items kept)
 
@@ -110,10 +107,19 @@ if "history" not in st.session_state:
 if "pending_intent" not in st.session_state:
     st.session_state.pending_intent = None
     st.session_state.pending_params = {}
+if "_scroll_to_bottom" not in st.session_state:
+    st.session_state._scroll_to_bottom = False
+if "assumed_month" not in st.session_state:
+    st.session_state.assumed_month = None
+
+# ...existing code...
 
 query = st.chat_input("Type your question...")
 if query:
+    # Append user message and mark to scroll after response renders
     st.session_state.history.append(("user", query))
+    st.session_state._scroll_to_bottom = True
+
     intent, params = route_query(query)
 
     # Helper: intents that need a month
@@ -124,52 +130,9 @@ if query:
     try:
         parsed_month_inline = _normalize_month(query)
     except Exception:
-        parsed_month_inline = None
-
-    # If we previously asked for a month (pending intent) and the user sent just a month,
-    # fulfill the pending intent directly without disambiguation.
-    if intent == "fallback" and st.session_state.get("pending_intent") and parsed_month_inline:
-        intent = st.session_state.pending_intent
-        params = dict(st.session_state.pending_params or {})
-        if params.get("month") is None:
-            params["month"] = parsed_month_inline
-        # clear pending
-        st.session_state.pending_intent = None
-        st.session_state.pending_params = {}
-
-    # If routing fell back and the user typed a month (e.g., 'June 2025'), offer quick choices
-    # Only show the disambiguation UI when there is no pending intent to fulfill.
-    if intent == "fallback":
-        parsed_month = parsed_month_inline
-        if parsed_month:
-            if not st.session_state.get("pending_intent"):
-                # If user prefers auto-default, route month-only queries directly to Revenue vs Budget
-                if 'prefer_month_default' in locals() and prefer_month_default:
-                    # announce the auto-selection and set intent accordingly
-                    st.session_state.history.append(("assistant", f"I detected month: {parsed_month}. Auto-selecting Revenue vs Budget as your default.", None, "disambiguation"))
-                    intent, params = "revenue_vs_budget", {"month": parsed_month}
-                else:
-                    # Format a friendly label alongside the normalized month
-                    try:
-                        _disp_month = pd.Period(parsed_month, freq="M").strftime('%B %Y')
-                    except Exception:
-                        _disp_month = parsed_month
-                    # show quick choice buttons to disambiguate what the user wants for that month (use normalized YYYY-MM display)
-                    st.session_state.history.append(("assistant", f"I detected month: {parsed_month} ({_disp_month}). What would you like to see for {parsed_month}?", None, "disambiguation"))
-                # store the parsed month for reference; no quick-action buttons are rendered
-                st.session_state._parsed_month = parsed_month
-
-    # If user wants debug info, attach RAG retrieval hints into the session (non-sensitive)
-    try:
-        if 'show_rag_debug' in locals() and show_rag_debug:
-            from agent import rag as _rag
-            retrieved = _rag.retrieve(query, top_k=5)
-            # store in session_state to render with assistant message
-            st.session_state.last_retrieved = retrieved
-        else:
-            st.session_state.last_retrieved = []
-    except Exception:
-        st.session_state.last_retrieved = []
+        pass
+    # Clear any previous retrieval debug state (feature removed)
+    st.session_state.last_retrieved = []
 
     # If this intent needs a month and it's missing, remember it as pending so a month-only follow-up fulfills it.
     if intent != "fallback" and _needs_month(intent) and not params.get("month"):
@@ -180,20 +143,55 @@ if query:
     proceed_response = intent != "fallback"
 
     if proceed_response:
-        if intent == "revenue_vs_budget":
-            text, fig = tools.get_revenue_vs_budget(month=params.get("month"))
-        elif intent == "gross_margin_trend":
-            text, fig = tools.get_gross_margin_trend(last_n=params.get("last_n", 3))
-        elif intent == "opex_breakdown":
-            text, fig = tools.get_opex_breakdown(month=params.get("month"))
-        elif intent == "cash_runway":
-            text, fig = tools.get_cash_runway()
-        elif intent == "ebitda":
-            text, fig = tools.get_ebitda(month=params.get("month"))
-        else:
-            text, fig = ("I can answer: Revenue vs Budget, Gross Margin % trend, Opex breakdown, EBITDA, and Cash runway.", None)
+        # If a month was previously mentioned alone, use it for month-required intents with missing month
+        if _needs_month(intent) and not params.get("month") and st.session_state.get("assumed_month"):
+            params["month"] = st.session_state.assumed_month
+            # clear it once used to avoid unintended reuse
+            st.session_state.assumed_month = None
+        # Simple, reliable on-page spinner during tool execution
+        with st.spinner("Fetching data..."):
+            if intent == "revenue_vs_budget":
+                text, fig = tools.get_revenue_vs_budget(month=params.get("month"))
+            elif intent == "gross_margin_trend":
+                text, fig = tools.get_gross_margin_trend(last_n=params.get("last_n", 3))
+            elif intent == "opex_breakdown":
+                text, fig = tools.get_opex_breakdown(month=params.get("month"))
+            elif intent == "cash_runway":
+                text, fig = tools.get_cash_runway(last_n=params.get("last_n", 3))
+            elif intent == "ebitda":
+                text, fig = tools.get_ebitda(month=params.get("month"))
+            else:
+                text, fig = ("I can answer: Revenue vs Budget, Gross Margin % trend, Opex breakdown, EBITDA, and Cash runway.", None)
 
+        # Append the assistant response
         st.session_state.history.append(("assistant", text, fig, intent))
+        # trigger auto-scroll to bottom for this run
+        st.session_state._scroll_to_bottom = True
+    else:
+        # Fallback: if user only provided a date-like string, guide them
+        disp_month = None
+        try:
+            m = _normalize_month(query)
+            if m:
+                import pandas as _pd
+                disp_month = _pd.Period(m, freq="M").strftime('%b %Y')
+                # store for next follow-up
+                st.session_state.assumed_month = m
+        except Exception:
+            disp_month = None
+        if disp_month:
+            msg = (
+                f"Got {disp_month}. What would you like to see?\n"
+                f"- Revenue vs Budget\n- Opex breakdown\n- EBITDA\n- Gross Margin % trend\n- Cash runway\n\n"
+                f"You can also say things like: 'Revenue vs Budget for {disp_month}'."
+            )
+        else:
+            msg = (
+                "Tell me what to compute: Revenue vs Budget, Opex breakdown, EBITDA, Gross Margin % trend, or Cash runway. "
+                "For month-specific answers, include a month, e.g., 'June 2025 revenue vs budget'."
+            )
+        st.session_state.history.append(("assistant", msg, None, "fallback"))
+        st.session_state._scroll_to_bottom = True
 
 for item in st.session_state.history:
     role = item[0]
@@ -203,7 +201,8 @@ for item in st.session_state.history:
     else:
         with st.chat_message("assistant"):
             # Render structured metrics first (clean, no markdown), then a plain sentence.
-            intent = item[3] if len(item) > 3 else None
+            msg_intent = item[3] if len(item) > 3 else None
+            intent = msg_intent
 
             def _strip_md(s: str) -> str:
                 s2 = re.sub(r"\*\*(.*?)\*\*", r"\1", s)
@@ -321,7 +320,10 @@ for item in st.session_state.history:
                 stripped = _sanitize_text(_strip_md(item[1]))
                 vals = re.findall(r"(\d+(?:\.\d+)?)\s*months?", stripped)
                 if vals:
-                    line = f"Cash Runway: {vals[0]} months"
+                    # Try to detect the averaging window from the sentence, e.g., "avg net burn last 6 months"
+                    win = re.search(r"avg\s+net\s+burn\s+last\s+(\d+)\s+months", stripped, re.IGNORECASE)
+                    suffix = f" (avg over {win.group(1)} months)" if win else ""
+                    line = f"Cash Runway: {vals[0]} months{suffix}"
                     _render_summary_code(line)
                 else:
                     _render_summary_code(stripped)
@@ -376,12 +378,37 @@ for item in st.session_state.history:
                 # Fallback for other intents: render monospace summary
                 _render_summary_code(item[1])
 
-            # Render RAG debug cards (if present and enabled)
-            if show_rag_debug and st.session_state.get("last_retrieved"):
-                with st.expander("Retrieved docs (RAG)"):
-                    for d in st.session_state.get("last_retrieved", []):
-                        st.write(f"- {d.get('title')} (id={d.get('id')}, score={d.get('score'):.3f})")
-                        st.write(d.get('text')[:500] + ("..." if len(d.get('text',''))>500 else ""))
+            # RAG debug cards removed
 
             if len(item) > 2 and item[2] is not None:
                 st.pyplot(item[2])
+
+# If a new response was added this run, auto-scroll to bottom (simple, minimal)
+if st.session_state.get("_scroll_to_bottom"):
+    try:
+        components.html(
+            """
+            <script>
+            (function(){
+                function scrollOnce(){
+                    try{
+                        const doc = window.parent ? window.parent.document : document;
+                        const el = doc.querySelector('[data-testid="stAppViewContainer"] section.main div.block-container')
+                                  || doc.querySelector('section.main div.block-container')
+                                  || doc.querySelector('section.main')
+                                  || doc.body;
+                        if(el){ el.scrollTop = el.scrollHeight; }
+                    }catch(e){}
+                }
+                // try a couple of times to catch late layout
+                setTimeout(scrollOnce, 50);
+                setTimeout(scrollOnce, 200);
+            })();
+            </script>
+            """,
+            height=0,
+        )
+    except Exception:
+        pass
+    # reset flag
+    st.session_state._scroll_to_bottom = False

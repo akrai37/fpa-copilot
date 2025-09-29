@@ -320,7 +320,7 @@ def get_opex_breakdown(month: Optional[str]) -> Tuple[str, Optional[plt.Figure]]
     text = f"{m.strftime('%B %Y')} Opex: **{_clean(_fmt_money(total))}** ({parts})."
     return text, fig
 
-def get_cash_runway() -> Tuple[str, Optional[plt.Figure]]:
+def get_cash_runway(last_n: int = 3) -> Tuple[str, Optional[plt.Figure]]:
     dfs = load_data()
     actuals, fx, cash = dfs["actuals"], dfs["fx"], dfs["cash"]
     if actuals is None or fx is None or cash is None:
@@ -365,8 +365,14 @@ def get_cash_runway() -> Tuple[str, Optional[plt.Figure]]:
     net  = rev - cogs - opex
     burn = (-net).clip(lower=0.0)
 
-    last3 = burn.sort_index().tail(3)
-    avg_burn = last3.mean() if not last3.empty else np.nan
+    # Use the last N months of burn to compute average; default N=3
+    try:
+        n = int(last_n)
+    except Exception:
+        n = 3
+    n = max(1, n)
+    lastN = burn.sort_index().tail(n)
+    avg_burn = lastN.mean() if not lastN.empty else np.nan
 
     latest_cash_row = cash_usd.sort_values("month").tail(1)
     if latest_cash_row.empty:
@@ -404,7 +410,7 @@ def get_cash_runway() -> Tuple[str, Optional[plt.Figure]]:
             lm = str(latest_month)
         text = (
             f"Latest cash ({lm}): **{_fmt_money(latest_cash)}**. "
-            f"Profitable or zero net burn over the last 3 months — runway not applicable."
+            f"Profitable or zero net burn over the last {n} months — runway not applicable."
         )
     elif np.isnan(runway):
         try:
@@ -419,7 +425,7 @@ def get_cash_runway() -> Tuple[str, Optional[plt.Figure]]:
     else:
         text = (
             f"Cash runway: **{runway:.1f} months** "
-            f"(cash **{_fmt_money(latest_cash)}**, avg net burn last 3 months **{_fmt_money(avg_burn)}**/mo)."
+            f"(cash **{_fmt_money(latest_cash)}**, avg net burn last {n} months **{_fmt_money(avg_burn)}**/mo)."
         )
     return text, fig
 
