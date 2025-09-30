@@ -43,6 +43,7 @@ streamlit run app.py
 - Chat agent → intent classification → deterministic tools → text + charts (inline).
 - Supported metrics: Revenue vs Budget, Gross Margin %, Opex breakdown, EBITDA, Cash runway.
 - Optional local embeddings (Hugging Face sentence-transformers, default: `sentence-transformers/all-MiniLM-L6-v2`) to improve fuzzy matching; falls back to TF‑IDF.
+- Environment toggle: set `RAG_EMBEDDING_MODEL` to change the embedding checkpoint used when `sentence-transformers` is installed. If `sentence-transformers` is not installed (or the env var is not set), the system falls back to TF‑IDF retrieval only.
 - Tests included for planner and tool functions (pytest).
 - Optional PDF export: quick 2-page board-style snapshot.
 
