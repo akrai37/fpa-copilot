@@ -95,12 +95,13 @@ with st.sidebar:
     # (Clear chat button moved to top) -- removed bottom spacer/button
 
 st.markdown("""
-Ask about **Revenue vs Budget**, **Gross Margin % trend**, **Opex breakdown**, or **Cash runway**.
+Ask about **Revenue vs Budget**, **Gross Margin % trend**, **Opex breakdown**, **EBITDA**, or **Cash runway**.
 
 **Examples**
 - What was June 2025 revenue vs budget in USD?
 - Show Gross Margin % trend for the last 3 months.
 - Break down Opex by category for June 2025.
+- What is EBITDA for June 2025?
 - What is our cash runway right now?
 """)
 
