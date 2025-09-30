@@ -639,9 +639,51 @@ def export_pdf(path: str, month_str: Optional[str] = None):
             c.drawImage(tmp_png3, left, target_y3, width=content_width, height=draw_h3, preserveAspectRatio=True, mask='auto')
         try: os.remove(tmp_png3)
         except: pass
+        after_opex_bottom_y = target_y3
+    else:
+        # no chart; continue from body end
+        after_opex_bottom_y = body2_end_y
 
+    # EBITDA section (requires month); place after Opex
+    text5, fig5 = get_ebitda(month_str or None)
+    ebitda_text_y = after_opex_bottom_y - 0.2*inch
+    ebitda_end_y = wrap_and_draw_text(c, text5, left, ebitda_text_y, content_width, font_size=10, leading=12)
+    if fig5:
+        tmp_png5 = os.path.join(FIXTURES_DIR, "_tmp_chart5.png")
+        fig5.savefig(tmp_png5, dpi=150, bbox_inches="tight")
+        ebitda_chart_top = ebitda_end_y - 0.15*inch
+        # Fit to remaining space above bottom margin; shrink if necessary
+        draw_h5 = chart_h
+        target_y5 = ebitda_chart_top - chart_h
+        if target_y5 < bottom_margin:
+            available_h5 = max(0.0, ebitda_chart_top - bottom_margin)
+            if available_h5 < 1.0*inch:
+                # new page for EBITDA chart
+                c.showPage()
+                try:
+                    c.bookmarkPage("page3")
+                    c.addOutlineEntry("EBITDA (continued)", "page3", level=0, closed=False)
+                except Exception:
+                    pass
+                # reset layout vars for new page context
+                left = 1*inch
+                right = width - 1*inch
+                content_width = right - left
+                ebitda_chart_top = height - top_margin
+                available_h5 = ebitda_chart_top - bottom_margin
+            draw_h5 = max(1.5*inch, available_h5)
+            target_y5 = ebitda_chart_top - draw_h5
+        if draw_h5 > 0.25*inch:
+            c.drawImage(tmp_png5, left, target_y5, width=content_width, height=draw_h5, preserveAspectRatio=True, mask='auto')
+        try: os.remove(tmp_png5)
+        except: pass
+        after_ebitda_bottom_y = target_y5
+    else:
+        after_ebitda_bottom_y = ebitda_end_y
+
+    # Cash section comes after EBITDA
     text4, fig4 = get_cash_runway()
-    cash_text_y = chart2_top - chart_h - 0.2*inch
+    cash_text_y = after_ebitda_bottom_y - 0.2*inch
     cash_end_y = wrap_and_draw_text(c, text4, left, cash_text_y, content_width, font_size=10, leading=12)
     if fig4:
         tmp_png4 = os.path.join(FIXTURES_DIR, "_tmp_chart4.png")
