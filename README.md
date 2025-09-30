@@ -4,6 +4,8 @@
 
 CFO Copilot is a lightweight FP&A assistant built with Streamlit. It reads committed CSV fixtures (actuals, budget, FX, and cash) and answers a small set of common FP&A questions with text summaries and charts. It also supports a compact 2-page PDF export intended for quick board-pack snapshots.
 
+👉 Try it online: https://fpa-copilot.streamlit.app/
+
 ## Project contents
 - `app.py` — Streamlit application and UI glue.
 - `agent/` — core agent logic:
