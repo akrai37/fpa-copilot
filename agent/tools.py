@@ -288,7 +288,22 @@ def get_gross_margin_trend(last_n: int = 3) -> Tuple[str, Optional[plt.Figure]]:
     ax.set_ylabel("%")
     ax.set_xlabel("Month")
     ax.grid(True, linestyle="--", linewidth=0.5)
-    # Use default y-axis scaling for a simple, clean look (no custom headroom)
+    # Set y-axis limits based on actual GM % values so the plot shows absolute percentages
+    try:
+        y_min, y_max = float(min(y_vals)), float(max(y_vals))
+        if math.isfinite(y_min) and math.isfinite(y_max):
+            # tighten padding so small changes are visible; use 0.2% of span or 0.01 absolute as minimum
+            span = max(1e-6, y_max - y_min)
+            pad = max(0.01, 0.002 * span)
+            ax.set_ylim(y_min - pad, y_max + pad)
+            # format ticks to three decimal places for more accuracy (e.g., 84.123%)
+            ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda v, _: f"{v:.3f}%"))
+            # make the line slightly bolder and markers bigger for visibility
+            for line in ax.get_lines():
+                line.set_linewidth(2.0)
+                line.set_markersize(6)
+    except Exception:
+        pass
 
     # No on-chart text annotations; keep the plot clean as originally
     fig.autofmt_xdate()

@@ -90,6 +90,8 @@ with st.sidebar:
 
     # ...sidebar continues (other items kept)
 
+    # ...sidebar continues (other items kept)
+
     # (Clear chat button moved to top) -- removed bottom spacer/button
 
 st.markdown("""
@@ -326,6 +328,8 @@ for item in st.session_state.history:
                     suffix = f" (avg over {win.group(1)} months)" if win else ""
                     line = f"Cash Runway: {vals[0]} months{suffix}"
                     _render_summary_code(line)
+                    # Minimal inline note to clarify definition (P&L-derived vs cash-balance)
+                    st.markdown("<div style='font-size:12px;color:#6c757d;margin-top:6px'>Calculated from P&L (Revenue − COGS − Opex). For strict liquidity, compare against cash-balance runway.</div>", unsafe_allow_html=True)
                 else:
                     _render_summary_code(stripped)
             elif intent == "gross_margin_trend":
