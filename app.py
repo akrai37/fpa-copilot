@@ -54,7 +54,7 @@ with st.sidebar:
     st.header("Export")
     month_for_pdf = st.text_input("Month for PDF (e.g., June 2025)", value="")
     if st.button("Export Board PDF"):
-        # Normalize month input (accepts 'June', '2025-06', 'Jun 2025', etc.).
+        # Normalize month input; if blank, fall back to latest available month in data
         month_input = (month_for_pdf or "").strip()
         norm_month = None
         if month_input:
@@ -65,28 +65,49 @@ with st.sidebar:
             except Exception:
                 norm_month = None
 
-        # If user typed something we couldn't parse, show a friendly error
-        if month_input and norm_month is None:
-            st.error("Invalid month. Please enter like 'June 2025' or '2025-06'.")
+            # If user typed something we couldn't parse, show a friendly error and skip
+            if norm_month is None:
+                st.error("Invalid month. Please enter like 'June 2025' or '2025-06'.")
+                st.stop()
         else:
-            with st.spinner("Generating PDF..."):
-                tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
-                try:
-                    tools.export_pdf(tmp.name, norm_month)
-                    st.success("PDF generated.")
-                    st.download_button(
-                        "Download PDF",
-                        data=open(tmp.name, "rb").read(),
-                        file_name="board_pack.pdf",
-                        mime="application/pdf",
-                    )
-                except Exception:
-                    st.error("Couldn't generate PDF. Please try again with a valid month like 'June 2025'.")
-                finally:
+            # No input: try to infer latest month from data (actuals/budget/cash)
+            try:
+                dfs = tools.load_data()
+                months = []
+                for key in ("actuals", "budget", "cash"):
+                    df = dfs.get(key)
+                    if df is not None and "month" in df.columns:
+                        m = pd.to_datetime(df["month"], errors="coerce").dt.to_period("M")
+                        if not m.dropna().empty:
+                            months.append(m.max())
+                if months:
+                    latest = max(months)
+                    norm_month = str(latest)
                     try:
-                        os.unlink(tmp.name)
+                        st.info(f"No month provided. Exporting with the latest month: {latest.strftime('%b %Y')}.")
                     except Exception:
-                        pass
+                        st.info(f"No month provided. Exporting with the latest month: {latest}.")
+            except Exception:
+                norm_month = None
+
+        with st.spinner("Generating PDF..."):
+            tmp = tempfile.NamedTemporaryFile(delete=False, suffix=".pdf")
+            try:
+                tools.export_pdf(tmp.name, norm_month)
+                st.success("PDF generated.")
+                st.download_button(
+                    "Download PDF",
+                    data=open(tmp.name, "rb").read(),
+                    file_name="board_pack.pdf",
+                    mime="application/pdf",
+                )
+            except Exception:
+                st.error("Couldn't generate PDF. Please try again with a valid month like 'June 2025'.")
+            finally:
+                try:
+                    os.unlink(tmp.name)
+                except Exception:
+                    pass
 
     # ...sidebar continues (other items kept)
 
